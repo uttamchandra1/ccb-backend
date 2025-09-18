@@ -1,0 +1,8 @@
+
+> backend@1.0.0 dev
+> TS_NODE_TRANSPILE_ONLY=1 node -r dotenv/config -r ts-node/register src/server.ts
+
+ProfessionalInviteService initialized successfully
+(node:14803) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Server running on port 6969
