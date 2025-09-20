@@ -718,10 +718,28 @@ app.get("/cards/stats", async (req, res) => {
 // ============================================================================
 // PROFESSIONAL INVITE SYSTEM
 // ============================================================================
-const inviteService = new ProfessionalInviteService_1.ProfessionalInviteService();
+// Test route to check if the server is working
+app.get("/test", (req, res) => {
+    res.json({
+        message: "Test route working",
+        timestamp: new Date().toISOString(),
+    });
+});
+let inviteService;
+try {
+    inviteService = new ProfessionalInviteService_1.ProfessionalInviteService();
+    console.log("ProfessionalInviteService initialized successfully");
+}
+catch (error) {
+    console.error("Error initializing ProfessionalInviteService:", error);
+    inviteService = null;
+}
 // Generate professional invite code
 app.post("/invite/create", async (req, res) => {
     try {
+        if (!inviteService) {
+            return res.status(500).json({ error: "Invite service not initialized" });
+        }
         const authHeader = req.headers.authorization;
         if (!(authHeader === null || authHeader === void 0 ? void 0 : authHeader.startsWith("Bearer "))) {
             return res
@@ -751,6 +769,7 @@ app.post("/invite/create", async (req, res) => {
         }
     }
     catch (error) {
+        console.error("Error in /invite/create:", error);
         res.status(500).json({
             error: (error === null || error === void 0 ? void 0 : error.message) || "Failed to create invite code",
         });
@@ -907,6 +926,97 @@ app.post("/friends/:friendId/manage", async (req, res) => {
     catch (error) {
         res.status(500).json({
             error: (error === null || error === void 0 ? void 0 : error.message) || "Failed to manage friend request",
+        });
+    }
+});
+// Get user's invite codes
+app.get("/invite/my-codes", async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!(authHeader === null || authHeader === void 0 ? void 0 : authHeader.startsWith("Bearer "))) {
+            return res
+                .status(401)
+                .json({ error: "Missing or invalid authorization header" });
+        }
+        const token = authHeader.substring(7);
+        const { data: userData, error } = await supabase_1.default.auth.getUser(token);
+        if (error || !userData.user) {
+            return res.status(401).json({ error: (error === null || error === void 0 ? void 0 : error.message) || "Invalid token" });
+        }
+        const userId = userData.user.id;
+        if (!supabase_1.supabaseAdmin) {
+            return res.status(500).json({
+                error: "Server not configured with SUPABASE_SERVICE_ROLE_KEY",
+            });
+        }
+        // Get user's invite codes
+        const { data: codes, error: codesError } = await supabase_1.supabaseAdmin
+            .from("invite_codes")
+            .select("*")
+            .eq("inviter_user_id", userId)
+            .eq("is_active", true)
+            .order("created_at", { ascending: false });
+        if (codesError) {
+            console.error("Error fetching invite codes:", codesError);
+            return res.status(500).json({ error: "Failed to fetch invite codes" });
+        }
+        res.json({
+            success: true,
+            codes: codes || [],
+        });
+    }
+    catch (error) {
+        console.error("Error getting invite codes:", error);
+        res.status(500).json({
+            error: (error === null || error === void 0 ? void 0 : error.message) || "Failed to get invite codes",
+        });
+    }
+});
+// Track share analytics
+app.post("/invite/track-share", async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!(authHeader === null || authHeader === void 0 ? void 0 : authHeader.startsWith("Bearer "))) {
+            return res
+                .status(401)
+                .json({ error: "Missing or invalid authorization header" });
+        }
+        const token = authHeader.substring(7);
+        const { data: userData, error } = await supabase_1.default.auth.getUser(token);
+        if (error || !userData.user) {
+            return res.status(401).json({ error: (error === null || error === void 0 ? void 0 : error.message) || "Invalid token" });
+        }
+        const userId = userData.user.id;
+        const { shareType, timestamp, platform, inviteCode } = req.body;
+        if (!supabase_1.supabaseAdmin) {
+            return res.status(500).json({
+                error: "Server not configured with SUPABASE_SERVICE_ROLE_KEY",
+            });
+        }
+        // Store share analytics
+        const { error: insertError } = await supabase_1.supabaseAdmin
+            .from("invite_usage")
+            .insert({
+            user_id: userId,
+            invite_code: inviteCode || "native_share",
+            share_type: shareType || "native_share",
+            platform: platform || "unknown",
+            shared_at: timestamp || new Date().toISOString(),
+            conversion_status: "shared",
+        });
+        if (insertError) {
+            console.error("Error tracking share:", insertError);
+            return res.status(500).json({ error: "Failed to track share" });
+        }
+        res.json({
+            success: true,
+            message: "Share tracked successfully",
+        });
+    }
+    catch (error) {
+        console.error("Error tracking share:", error);
+        res.status(500).json({
+            error: (error === null || error === void 0 ? void 0 : error.message) || "Failed to track share",
         });
     }
 });

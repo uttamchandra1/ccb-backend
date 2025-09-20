@@ -46,7 +46,60 @@ async function getGoogleTokens(userId: string) {
     throw new Error("No Google tokens found for user");
   }
 
+  // Check if token is expired and refresh if needed
+  const now = Date.now();
+  const expiryDate = tokenRow.expiry_date
+    ? parseInt(tokenRow.expiry_date.toString())
+    : 0;
+
+  if (expiryDate < now + 60000) {
+    // Refresh if expires within 1 minute
+    console.log("Access token expired, refreshing...");
+    return await refreshGoogleToken(userId, tokenRow.refresh_token);
+  }
+
   return tokenRow;
+}
+
+async function refreshGoogleToken(userId: string, refreshToken: string) {
+  if (!supabaseAdmin) {
+    throw new Error("Server not configured with SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  const oauth2Client = getOAuthClient();
+  oauth2Client.setCredentials({
+    refresh_token: refreshToken,
+  });
+
+  try {
+    const { credentials } = await oauth2Client.refreshAccessToken();
+
+    // Update the tokens in database
+    const { error: updateError } = await supabaseAdmin
+      .from("user_google_tokens")
+      .update({
+        access_token: credentials.access_token,
+        expiry_date: credentials.expiry_date,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId);
+
+    if (updateError) {
+      console.error("Failed to update refreshed token:", updateError);
+      throw new Error("Failed to update refreshed token");
+    }
+
+    return {
+      access_token: credentials.access_token,
+      refresh_token: credentials.refresh_token || refreshToken,
+      expiry_date: credentials.expiry_date,
+    };
+  } catch (error) {
+    console.error("Token refresh failed:", error);
+    throw new Error(
+      "Failed to refresh access token. User needs to re-authenticate."
+    );
+  }
 }
 
 function parseEmailHeaders(headers: any[]) {
@@ -103,12 +156,25 @@ export async function syncEmails(req: Request, res: Response) {
     const pageToken = req.query.pageToken as string;
     const query = (req.query.q as string) || "newer_than:30d";
 
-    const listResp = await gmail.users.messages.list({
-      userId: "me",
-      maxResults,
-      pageToken,
-      q: query,
-    });
+    let listResp;
+    try {
+      listResp = await gmail.users.messages.list({
+        userId: "me",
+        maxResults,
+        pageToken,
+        q: query,
+      });
+    } catch (error: any) {
+      if (error.code === 401) {
+        console.error("Gmail API authentication failed:", error.message);
+        return res.status(401).json({
+          error:
+            "Gmail authentication expired. Please re-authenticate with Google.",
+          code: "GMAIL_AUTH_EXPIRED",
+        });
+      }
+      throw error;
+    }
 
     const messageIds = (listResp.data.messages || [])
       .map((m) => m.id!)
@@ -445,11 +511,24 @@ export async function getGmailCards(req: Request, res: Response) {
 
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    const listResp = await gmail.users.messages.list({
-      userId: "me",
-      maxResults: 25,
-      q: "category:primary newer_than:365d",
-    });
+    let listResp;
+    try {
+      listResp = await gmail.users.messages.list({
+        userId: "me",
+        maxResults: 25,
+        q: "category:primary newer_than:365d",
+      });
+    } catch (error: any) {
+      if (error.code === 401) {
+        console.error("Gmail API authentication failed:", error.message);
+        return res.status(401).json({
+          error:
+            "Gmail authentication expired. Please re-authenticate with Google.",
+          code: "GMAIL_AUTH_EXPIRED",
+        });
+      }
+      throw error;
+    }
 
     const messageIds = (listResp.data.messages || [])
       .map((m) => m.id!)

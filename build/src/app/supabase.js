@@ -5,9 +5,21 @@ const supabase_js_1 = require("@supabase/supabase-js");
 const supabaseUrl = process.env.SUPABASE_API_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabase = (0, supabase_js_1.createClient)(supabaseUrl, supabaseKey);
+const supabase = (0, supabase_js_1.createClient)(supabaseUrl, supabaseKey, {
+    auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false,
+    },
+});
 exports.supabaseAdmin = supabaseServiceRoleKey
-    ? (0, supabase_js_1.createClient)(supabaseUrl, supabaseServiceRoleKey)
+    ? (0, supabase_js_1.createClient)(supabaseUrl, supabaseServiceRoleKey, {
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+            detectSessionInUrl: false,
+        },
+    })
     : undefined;
 exports.default = supabase;
 //# sourceMappingURL=supabase.js.map

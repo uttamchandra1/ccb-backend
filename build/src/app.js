@@ -8,6 +8,7 @@ const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const gmail_routes_1 = __importDefault(require("./routes/gmail.routes"));
 const cards_routes_1 = __importDefault(require("./routes/cards.routes"));
+const invite_routes_1 = __importDefault(require("./routes/invite.routes"));
 const app = (0, express_1.default)();
 // Global middleware
 app.use(express_1.default.json());
@@ -20,8 +21,10 @@ app.get("/api", (_req, res) => {
 app.use("/", auth_routes_1.default);
 app.use("/", gmail_routes_1.default);
 app.use("/", cards_routes_1.default);
+app.use("/", invite_routes_1.default);
 app.use("/api", auth_routes_1.default);
 app.use("/api", gmail_routes_1.default);
 app.use("/api", cards_routes_1.default);
+app.use("/api", invite_routes_1.default);
 exports.default = app;
 //# sourceMappingURL=app.js.map

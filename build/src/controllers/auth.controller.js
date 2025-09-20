@@ -48,8 +48,13 @@ function beginGoogleAuth(req, res) {
     const isMobile = String(req.query.mobile || "") === "true";
     // Default deep link for the Expo app. Can be overridden by passing ?redirect=...
     const mobileRedirect = req.query.redirect || "frontapp://auth/success";
+    const inviteCode = req.query.inviteCode || null;
     // Carry context via OAuth state so the callback knows to deep-link back to the app
-    const statePayload = Buffer.from(JSON.stringify({ mobile: isMobile, redirect: mobileRedirect }), "utf8").toString("base64url");
+    const statePayload = Buffer.from(JSON.stringify({
+        mobile: isMobile,
+        redirect: mobileRedirect,
+        inviteCode: inviteCode,
+    }), "utf8").toString("base64url");
     const url = oauth2Client.generateAuthUrl({
         access_type: "offline",
         prompt: "consent",
@@ -127,6 +132,7 @@ async function googleOAuthCallback(req, res) {
         // Determine client context from OAuth state
         let isMobileApp = false;
         let mobileRedirect = "frontapp://auth/success";
+        let inviteCode = null;
         if (typeof req.query.state === "string" && req.query.state.length > 0) {
             try {
                 const decoded = JSON.parse(Buffer.from(req.query.state, "base64url").toString("utf8"));
@@ -134,9 +140,31 @@ async function googleOAuthCallback(req, res) {
                 if (typeof (decoded === null || decoded === void 0 ? void 0 : decoded.redirect) === "string" && decoded.redirect) {
                     mobileRedirect = decoded.redirect;
                 }
+                inviteCode = (decoded === null || decoded === void 0 ? void 0 : decoded.inviteCode) || null;
             }
             catch (_) {
                 // ignore malformed state
+            }
+        }
+        // Process invite code if present
+        if (inviteCode) {
+            try {
+                const { ProfessionalInviteService } = await Promise.resolve().then(() => __importStar(require("../services/ProfessionalInviteService")));
+                const inviteService = new ProfessionalInviteService();
+                const result = await inviteService.processInviteCode(userId, inviteCode, {
+                    userAgent: req.headers["user-agent"],
+                    ipAddress: req.ip,
+                    platform: isMobileApp ? "mobile" : "web",
+                });
+                if (result.success) {
+                    console.log(`Invite code ${inviteCode} processed successfully for user ${userId}`);
+                }
+                else {
+                    console.warn(`Failed to process invite code ${inviteCode}:`, result.error);
+                }
+            }
+            catch (error) {
+                console.error("Error processing invite code:", error);
             }
         }
         if (isMobileApp) {

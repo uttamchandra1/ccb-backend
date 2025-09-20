@@ -37,6 +37,26 @@ exports.ProfessionalInviteService = void 0;
 const supabase_1 = require("../app/supabase");
 const crypto = __importStar(require("crypto"));
 class ProfessionalInviteService {
+    normalizeInviteCode(input) {
+        if (!input)
+            return input;
+        const raw = String(input)
+            .toUpperCase()
+            .replace(/\s+/g, "")
+            .replace(/[^A-Z0-9]/g, "");
+        // Expect formats:
+        // - CCB-XXXX-XXXX
+        // - CCBXXXXXXXX (no dashes)
+        if (/^CCB-[A-F0-9]{4}-[A-F0-9]{4}$/.test(input.toUpperCase())) {
+            return input.toUpperCase();
+        }
+        const compactMatch = raw.match(/^CCB([A-F0-9]{8})$/);
+        if (compactMatch) {
+            const hex = compactMatch[1];
+            return `CCB-${hex.slice(0, 4)}-${hex.slice(4, 8)}`;
+        }
+        return raw; // fallback to normalized raw for any future formats
+    }
     /**
      * Generate a professional invite code with advanced features
      */
@@ -150,18 +170,31 @@ Join the smart way to discover credit cards! 🚀`;
             return { success: false, error: "Database not configured" };
         }
         try {
+            console.log(`Processing invite code: ${inviteCode} for user: ${invitedUserId}`);
+            const normalizedCode = this.normalizeInviteCode(inviteCode);
             // Validate invite code
             const { data: invite, error: inviteError } = await supabase_1.supabaseAdmin
                 .from("invite_codes")
                 .select("*")
-                .eq("invite_code", inviteCode.toUpperCase())
+                .eq("invite_code", normalizedCode)
                 .eq("is_active", true)
                 .single();
+            console.log("Invite lookup result:", { invite, inviteError });
             if (inviteError || !invite) {
+                console.log("Invite code not found or error:", inviteError);
                 return { success: false, error: "Invalid or expired invite code" };
             }
+            console.log("Found invite:", {
+                id: invite.id,
+                code: invite.invite_code,
+                expires_at: invite.expires_at,
+                current_uses: invite.current_uses,
+                max_uses: invite.max_uses,
+                is_active: invite.is_active,
+            });
             // Professional validations
             const validationResult = await this.validateInviteCode(invite, invitedUserId);
+            console.log("Validation result:", validationResult);
             if (!validationResult.valid) {
                 return { success: false, error: validationResult.error };
             }
@@ -173,11 +206,13 @@ Join the smart way to discover credit cards! 🚀`;
                 .eq("invited_user_id", invitedUserId)
                 .single();
             if (existingUsage) {
+                console.log("User already used this invite code");
                 return {
                     success: false,
                     error: "You have already used this invite code",
                 };
             }
+            console.log("Processing invite code successfully...");
             // Record invite usage with detailed tracking
             const { data: usageData, error: usageError } = await supabase_1.supabaseAdmin
                 .from("invite_usage")
@@ -192,6 +227,7 @@ Join the smart way to discover credit cards! 🚀`;
                 .select()
                 .single();
             if (usageError) {
+                console.error("Error recording invite usage:", usageError);
                 return { success: false, error: "Failed to process invite" };
             }
             // Update invite code usage
@@ -221,6 +257,7 @@ Join the smart way to discover credit cards! 🚀`;
                 .eq("user_id", invite.inviter_user_id)
                 .eq("friend_id", invitedUserId)
                 .single();
+            console.log("Invite code processed successfully");
             return {
                 success: true,
                 friendship,
@@ -228,6 +265,7 @@ Join the smart way to discover credit cards! 🚀`;
             };
         }
         catch (error) {
+            console.error("Error in processInviteCode:", error);
             return { success: false, error: error.message };
         }
     }

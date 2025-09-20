@@ -59,9 +59,7 @@ async function upsertMyCards(req, res) {
         const user = await getUserFromToken(req);
         const userId = user.id;
         if (!supabase_1.supabaseAdmin) {
-            return res
-                .status(500)
-                .json({
+            return res.status(500).json({
                 error: "Server not configured with SUPABASE_SERVICE_ROLE_KEY",
             });
         }
@@ -73,13 +71,15 @@ async function upsertMyCards(req, res) {
             .filter((s) => typeof s === "string" && s.trim().length > 0)
             .map((issuer) => ({
             user_id: userId,
-            issuer,
-            brand: issuer,
+            card_name: issuer,
+            bank_name: issuer,
+            card_type: "Credit Card",
+            card_network: "Unknown",
             visibility: "friends",
         }));
         const { error } = await supabase_1.supabaseAdmin
             .from("user_cards")
-            .upsert(rows, { onConflict: "user_id,issuer" });
+            .upsert(rows, { onConflict: "user_id,card_name,bank_name" });
         if (error)
             return res.status(500).json({ error: error.message });
         res.json({ success: true, upserted: rows.length });
@@ -94,67 +94,140 @@ async function getFriendsCards(req, res) {
         const user = await getUserFromToken(req);
         const userId = user.id;
         if (!supabase_1.supabaseAdmin) {
-            return res
-                .status(500)
-                .json({
+            return res.status(500).json({
                 error: "Server not configured with SUPABASE_SERVICE_ROLE_KEY",
             });
         }
-        // 1) Read your contacts' emails
-        const { data: contacts, error: contactsError } = await supabase_1.supabaseAdmin
-            .from("contacts")
-            .select("email_addresses")
-            .eq("user_id", userId)
-            .limit(200);
-        if (contactsError)
-            return res.status(500).json({ error: contactsError.message });
-        const emails = new Set();
-        for (const c of contacts || []) {
-            const arr = ((c === null || c === void 0 ? void 0 : c.email_addresses) || []);
-            for (const e of arr) {
-                const v = ((e === null || e === void 0 ? void 0 : e.value) || "").trim().toLowerCase();
-                if (v)
-                    emails.add(v);
+        // Get friends through invite system (primary method)
+        const { data: friendships, error: friendshipError } = await supabase_1.supabaseAdmin
+            .from("friend_relationships")
+            .select("friend_id, user_id")
+            .or(`user_id.eq.${userId},friend_id.eq.${userId}`)
+            .eq("status", "accepted");
+        if (friendshipError) {
+            console.error("Error fetching friendships:", friendshipError);
+            return res.status(500).json({ error: friendshipError.message });
+        }
+        const friendIds = new Set();
+        for (const friendship of friendships || []) {
+            if (friendship.user_id === userId) {
+                friendIds.add(friendship.friend_id);
+            }
+            else {
+                friendIds.add(friendship.user_id);
             }
         }
-        // 2) Map contact emails to Supabase auth user ids (best-effort)
-        const friendIds = new Set();
-        if (emails.size > 0) {
-            const limited = Array.from(emails).slice(0, 200);
-            for (const email of limited) {
-                try {
-                    const { data } = await supabase_1.supabaseAdmin.auth.admin.getUserById(email);
-                    const friendId = (_a = data === null || data === void 0 ? void 0 : data.user) === null || _a === void 0 ? void 0 : _a.id;
-                    if (friendId && friendId !== userId)
-                        friendIds.add(friendId);
+        // Fallback: Read contacts if no friends found through invite system
+        if (friendIds.size === 0) {
+            const { data: contacts, error: contactsError } = await supabase_1.supabaseAdmin
+                .from("contacts")
+                .select("email_addresses")
+                .eq("user_id", userId)
+                .limit(200);
+            if (contactsError) {
+                console.error("Error fetching contacts:", contactsError);
+            }
+            else {
+                const emails = new Set();
+                for (const c of contacts || []) {
+                    const arr = ((c === null || c === void 0 ? void 0 : c.email_addresses) || []);
+                    for (const e of arr) {
+                        const v = ((e === null || e === void 0 ? void 0 : e.value) || "").trim().toLowerCase();
+                        if (v)
+                            emails.add(v);
+                    }
                 }
-                catch (_b) {
-                    // ignore lookup failures
+                // Map contact emails to Supabase auth user ids (best-effort)
+                if (emails.size > 0) {
+                    const limited = Array.from(emails).slice(0, 200);
+                    for (const email of limited) {
+                        try {
+                            const { data } = await supabase_1.supabaseAdmin.auth.admin.getUserById(email);
+                            const friendId = (_a = data === null || data === void 0 ? void 0 : data.user) === null || _a === void 0 ? void 0 : _a.id;
+                            if (friendId && friendId !== userId)
+                                friendIds.add(friendId);
+                        }
+                        catch (_b) {
+                            // ignore lookup failures
+                        }
+                    }
                 }
             }
         }
         if (friendIds.size === 0) {
-            return res.json({ issuers: [], counts: {} });
+            return res.json({
+                issuers: [],
+                counts: {},
+                friends: [],
+                message: "No friends found. Invite friends to see their cards!",
+            });
         }
-        // 3) Aggregate issuers shared by friends
+        // Get friend details and their cards
+        const friendIdsArray = Array.from(friendIds);
+        const { data: friendUsers, error: usersError } = await supabase_1.supabaseAdmin.auth.admin.listUsers();
+        if (usersError) {
+            console.error("Error fetching users:", usersError);
+            return res.status(500).json({ error: usersError.message });
+        }
+        const friends = friendUsers.users
+            .filter((user) => friendIdsArray.includes(user.id))
+            .map((user) => {
+            var _a, _b;
+            return ({
+                id: user.id,
+                name: ((_a = user.user_metadata) === null || _a === void 0 ? void 0 : _a.full_name) || user.email,
+                email: user.email,
+                avatar: (_b = user.user_metadata) === null || _b === void 0 ? void 0 : _b.avatar_url,
+            });
+        });
+        // Get cards from friends
         const { data: cardRows, error: cardsError } = await supabase_1.supabaseAdmin
             .from("user_cards")
-            .select("issuer")
-            .in("user_id", Array.from(friendIds))
+            .select("id, user_id, card_name, bank_name, card_type, card_network, visibility")
+            .in("user_id", friendIdsArray)
             .in("visibility", ["friends", "public"]);
-        if (cardsError)
+        if (cardsError) {
+            console.error("Error fetching friend cards:", cardsError);
             return res.status(500).json({ error: cardsError.message });
+        }
+        // Group cards by friend
+        const friendCards = [];
+        for (const friend of friends) {
+            const friendCardRows = (cardRows === null || cardRows === void 0 ? void 0 : cardRows.filter((card) => card.user_id === friend.id)) || [];
+            if (friendCardRows.length > 0) {
+                friendCards.push({
+                    friend,
+                    cards: friendCardRows.map((card) => ({
+                        id: card.id,
+                        cardName: card.card_name || "Unknown Card",
+                        bankName: card.bank_name || "Unknown Bank",
+                        cardType: card.card_type || "Credit Card",
+                        cardNetwork: card.card_network || "Unknown",
+                        visibility: card.visibility,
+                    })),
+                });
+            }
+        }
+        // Aggregate banks for backward compatibility
         const counts = {};
         for (const r of cardRows || []) {
-            const k = (r.issuer || "").trim();
+            const k = (r.bank_name || "").trim();
             if (!k)
                 continue;
             counts[k] = (counts[k] || 0) + 1;
         }
-        const issuers = Object.keys(counts).sort();
-        res.json({ issuers, counts });
+        const banks = Object.keys(counts).sort();
+        res.json({
+            banks,
+            counts,
+            friends,
+            friendCards,
+            totalFriends: friends.length,
+            totalCards: (cardRows === null || cardRows === void 0 ? void 0 : cardRows.length) || 0,
+        });
     }
     catch (error) {
+        console.error("Error in getFriendsCards:", error);
         res
             .status(500)
             .json({ error: (error === null || error === void 0 ? void 0 : error.message) || "Failed to get friends' cards" });
